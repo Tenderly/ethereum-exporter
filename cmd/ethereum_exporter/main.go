@@ -36,6 +36,7 @@ func main() {
 
 	netpeercount := flag.Bool("netpeercount", true, "netpeercount metrics on/off switch")
 	ethblocknumber := flag.Bool("ethblocknumber", true, "ethblocknumber metrics on/off switch")
+	ethfinalizedblocknumber := flag.Bool("ethfinalizedblocknumber", true, "ethfinalizedblocknumber metrics on/off switch")
 	ethblocktimestamp := flag.Bool("ethblocktimestamp", false, "ethblocktimestamp metrics on/off switch")
 	ethgasprice := flag.Bool("ethgasprice", true, "ethgasprice metrics on/off switch")
 	ethearliestblocktransactions := flag.Bool("ethearliestblocktransactions", true, "ethearliestblocktransactions metrics on/off switch")
@@ -71,6 +72,11 @@ func main() {
 	if *ethblocknumber {
 		registry.MustRegister(
 			collector.NewEthBlockNumber(rpc),
+		)
+	}
+	if *ethfinalizedblocknumber {
+		registry.MustRegister(
+			collector.NewEthFinalizedBlockNumber(rpc, *url),
 		)
 	}
 
