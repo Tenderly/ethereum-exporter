@@ -1,8 +1,6 @@
 package collector
 
 import (
-	"log/slog"
-
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/prometheus/client_golang/prometheus"
@@ -37,7 +35,6 @@ func (collector *EthFinalizedBlockNumber) Collect(ch chan<- prometheus.Metric) {
 	}
 
 	if err := collector.rpc.Call(&result, "eth_getBlockByNumber", "finalized", false); err != nil {
-		slog.Error("collect failed", "metric", "eth_finalized_block_number", "url", collector.url, "error", err)
 		ch <- prometheus.NewInvalidMetric(collector.desc, err)
 		return
 	}
