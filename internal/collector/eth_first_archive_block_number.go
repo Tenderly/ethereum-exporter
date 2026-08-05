@@ -3,6 +3,7 @@ package collector
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -117,25 +118,46 @@ func (collector *EthFirstArchiveBlockNumber) refresh() {
 
 // findFirstArchiveBlock binary-searches the earliest block whose state the node
 // still serves, and reports how many probes it took. head, when non-zero, seeds
-// the upper bound.
+// the upper bound. A probe that fails to reach the node aborts the search: half
+// a search cannot be completed into a trustworthy answer.
 func (collector *EthFirstArchiveBlockNumber) findFirstArchiveBlock(head uint64) (uint64, int, error) {
 	probes := 0
-	hasState := func(block uint64) bool {
+	hasState := func(block uint64) (bool, error) {
 		probes++
-		return collector.hasState(block)
+
+		state, err := collector.hasState(block)
+		if err != nil {
+			return false, fmt.Errorf("probing block %d: %w", block, err)
+		}
+
+		return state, nil
 	}
 
-	if hasState(1) {
+	state, err := hasState(1)
+	if err != nil {
+		return 0, probes, err
+	}
+	if state {
 		return 1, probes, nil
 	}
 
 	var high uint64
-	if head > 0 && hasState(head) {
-		high = head
+	if head > 0 {
+		state, err := hasState(head)
+		if err != nil {
+			return 0, probes, err
+		}
+		if state {
+			high = head
+		}
 	}
 	if high == 0 {
 		for _, candidate := range archiveProbeCandidates {
-			if hasState(candidate) {
+			state, err := hasState(candidate)
+			if err != nil {
+				return 0, probes, err
+			}
+			if state {
 				high = candidate
 				break
 			}
@@ -151,7 +173,12 @@ func (collector *EthFirstArchiveBlockNumber) findFirstArchiveBlock(head uint64) 
 	var low uint64
 	for high-low > 1 {
 		mid := (low + high) / 2
-		if hasState(mid) {
+
+		state, err := hasState(mid)
+		if err != nil {
+			return 0, probes, err
+		}
+		if state {
 			high = mid
 		} else {
 			low = mid
@@ -162,14 +189,25 @@ func (collector *EthFirstArchiveBlockNumber) findFirstArchiveBlock(head uint64) 
 }
 
 // hasState reports whether the node still serves state at block by asking for a
-// balance at that height. Pruned state answers with an RPC error instead.
-func (collector *EthFirstArchiveBlockNumber) hasState(block uint64) bool {
+// balance at that height. Pruned state answers with a JSON-RPC error instead.
+//
+// Only an answer from the node itself counts as "no state here". A transport
+// failure — connection reset, timeout, a proxy returning 5xx — says nothing
+// about retention, so it is returned as an error and aborts the search. Reading
+// one as the other would move the binary search past the real floor and report
+// a wrong block number as if it were a clean result.
+func (collector *EthFirstArchiveBlockNumber) hasState(block uint64) (bool, error) {
 	var result json.RawMessage
 	if err := collector.rpc.Call(&result, "eth_getBalance", zeroAddress, hexutil.EncodeUint64(block)); err != nil {
-		return false
+		var rpcErr rpc.Error
+		if errors.As(err, &rpcErr) {
+			return false, nil
+		}
+
+		return false, err
 	}
 
-	return len(result) > 0 && string(result) != "null"
+	return len(result) > 0 && string(result) != "null", nil
 }
 
 // reachable distinguishes an unreachable node from one that simply serves no
