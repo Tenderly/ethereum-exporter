@@ -85,12 +85,24 @@ func (collector *EthFirstArchiveBlockNumber) Collect(ch chan<- prometheus.Metric
 	ch <- prometheus.MustNewConstMetric(collector.desc, prometheus.GaugeValue, float64(block))
 }
 
+// refreshLoop probes once at startup, so the series does not stay absent until
+// the first boundary, and then only on wall-clock boundaries.
 func (collector *EthFirstArchiveBlockNumber) refreshLoop(interval time.Duration) {
 	collector.refresh()
 
-	for range time.Tick(interval) {
+	for {
+		time.Sleep(time.Until(nextTick(time.Now(), interval)))
 		collector.refresh()
 	}
+}
+
+// nextTick returns the next wall-clock boundary that is a whole multiple of
+// interval — 01:00, 02:00, ... for the default hour — rather than a multiple of
+// interval counted from process start. Truncate measures from the zero time in
+// UTC, which is what makes the boundaries absolute, and identical across
+// restarts and across every exporter instance.
+func nextTick(now time.Time, interval time.Duration) time.Time {
+	return now.Truncate(interval).Add(interval)
 }
 
 // refresh runs one search and stores the outcome. A failed search replaces the

@@ -133,6 +133,12 @@ func main() {
 	}
 
 	if *ethfirstarchiveblocknumber {
+		// A non-positive interval would leave the refresh loop with nothing to
+		// wait for and probe the node continuously.
+		if *ethfirstarchiveblockinterval <= 0 {
+			log.Fatal("-ethfirstarchiveblockinterval must be positive")
+		}
+
 		registry.MustRegister(
 			collector.NewEthFirstArchiveBlockNumber(rpc, *ethfirstarchiveblockinterval),
 		)

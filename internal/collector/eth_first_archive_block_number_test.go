@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -252,6 +253,42 @@ func TestEthFirstArchiveBlockNumberCollectAfterTransientFailure(t *testing.T) {
 		if got := *metric.Gauge.Value; got != 1_000_000 {
 			t.Fatalf("got %v, want 1000000", got)
 		}
+	}
+}
+
+// The search must run on wall-clock boundaries, not on multiples of the
+// interval counted from process start, so restarts do not move the probe to an
+// arbitrary minute of the hour.
+func TestEthFirstArchiveBlockNumberNextTick(t *testing.T) {
+	tests := []struct {
+		name     string
+		now      string
+		interval time.Duration
+		want     string
+	}{
+		{name: "mid hour", now: "2026-08-05T13:37:42Z", interval: time.Hour, want: "2026-08-05T14:00:00Z"},
+		{name: "on the boundary", now: "2026-08-05T13:00:00Z", interval: time.Hour, want: "2026-08-05T14:00:00Z"},
+		{name: "across midnight", now: "2026-08-05T23:41:00Z", interval: time.Hour, want: "2026-08-06T00:00:00Z"},
+		{name: "six hours", now: "2026-08-05T13:37:42Z", interval: 6 * time.Hour, want: "2026-08-05T18:00:00Z"},
+		{name: "fifteen minutes", now: "2026-08-05T13:37:42Z", interval: 15 * time.Minute, want: "2026-08-05T13:45:00Z"},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			now, err := time.Parse(time.RFC3339, test.now)
+			if err != nil {
+				t.Fatalf("could not parse now: %#v", err)
+			}
+			want, err := time.Parse(time.RFC3339, test.want)
+			if err != nil {
+				t.Fatalf("could not parse want: %#v", err)
+			}
+
+			if got := nextTick(now, test.interval); !got.Equal(want) {
+				t.Fatalf("got %s, want %s", got.Format(time.RFC3339), want.Format(time.RFC3339))
+			}
+		})
 	}
 }
 
