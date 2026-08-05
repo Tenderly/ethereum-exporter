@@ -37,6 +37,7 @@ Here is an example [`scrape_config`](https://prometheus.io/docs/prometheus/lates
 | eth_latest_block_transactions | Number of transactions in the latest block. |
 | eth_pending_block_transactions | The number of transactions in pending block. |
 | eth_hashrate | Hashes per second that this node is mining with. |
+| eth_first_archive_block_number | Earliest block whose state the node still retains. Found by binary search over `eth_getBalance`, refreshed in the background every `-ethfirstarchiveblockinterval` (default `1h`). |
 | eth_sync_starting | Block number at which current import started. |
 | eth_sync_current | Number of most recent block. |
 | eth_sync_highest | Estimated number of highest block. |
