@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/31z4/ethereum-prometheus-exporter/internal/collector"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -45,6 +46,9 @@ func main() {
 	ethhashrate := flag.Bool("ethhashrate", true, "ethhashrate metrics on/off switch")
 	ethsyncing := flag.Bool("ethsyncing", false, "ethsyncing metrics on/off switch")
 	paritynetpeers := flag.Bool("paritynetpeers", false, "paritynetpeers metrics on/off switch")
+
+	ethfirstarchiveblocknumber := flag.Bool("ethfirstarchiveblocknumber", true, "ethfirstarchiveblocknumber metrics on/off switch")
+	ethfirstarchiveblockinterval := flag.Duration("ethfirstarchiveblockinterval", time.Hour, "how often to search for the first archive block")
 
 	flag.Parse()
 	if len(flag.Args()) > 0 {
@@ -125,6 +129,12 @@ func main() {
 	if *paritynetpeers {
 		registry.MustRegister(
 			collector.NewParityNetPeers(rpc),
+		)
+	}
+
+	if *ethfirstarchiveblocknumber {
+		registry.MustRegister(
+			collector.NewEthFirstArchiveBlockNumber(rpc, *ethfirstarchiveblockinterval),
 		)
 	}
 
