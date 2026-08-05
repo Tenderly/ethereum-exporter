@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -22,6 +22,12 @@ type fakeNode struct {
 	head         uint64
 	firstArchive uint64 // 0 means the node serves no state at all
 	probes       int
+
+	// transientAt makes the first eth_getBalance probe of that height fail at
+	// the transport level, the way a connection reset or a proxy 503 would.
+	// 0 disables it, since the search never probes block 0.
+	transientAt    uint64
+	transientFired bool
 }
 
 func (n *fakeNode) server(t *testing.T) *httptest.Server {
@@ -56,6 +62,11 @@ func (n *fakeNode) server(t *testing.T) *httptest.Server {
 			block, err := hexutil.DecodeUint64(req.Params[1])
 			if err != nil {
 				t.Errorf("could not decode block %q: %#v", req.Params[1], err)
+				return
+			}
+			if block == n.transientAt && !n.transientFired {
+				n.transientFired = true
+				w.WriteHeader(http.StatusServiceUnavailable)
 				return
 			}
 			// Geth answers a pruned height with an error, not a null result.
@@ -154,6 +165,93 @@ func TestEthFirstArchiveBlockNumberWithoutHead(t *testing.T) {
 				t.Fatalf("got %d, want %d", got, test.want)
 			}
 		})
+	}
+}
+
+// A probe that never reaches the node says nothing about retention. Counting it
+// as pruned would push the binary search above the real floor and return a
+// confidently wrong block number, so the search must abort instead.
+func TestEthFirstArchiveBlockNumberTransientProbeFailure(t *testing.T) {
+	tests := []struct {
+		name         string
+		head         uint64
+		firstArchive uint64
+		transientAt  uint64
+	}{
+		// The first midpoint the search visits: treating it as pruned would
+		// report ~8000001 for a node that in fact retains state from 1000000.
+		{name: "first midpoint", head: 16_000_000, firstArchive: 1_000_000, transientAt: 8_000_000},
+		// The floor itself: a smaller error, but still silently wrong.
+		{name: "at the floor", head: 16_000_000, firstArchive: 15_500_000, transientAt: 15_500_000},
+		// Bounding the search fails too, and must not be read as "no state".
+		{name: "head probe", head: 16_000_000, firstArchive: 15_500_000, transientAt: 16_000_000},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			node := &fakeNode{head: test.head, firstArchive: test.firstArchive, transientAt: test.transientAt}
+			server := node.server(t)
+			defer server.Close()
+
+			client, err := rpc.DialHTTP(server.URL)
+			if err != nil {
+				t.Fatalf("rpc connection error: %#v", err)
+			}
+
+			collector := newEthFirstArchiveBlockNumber(client)
+			got, _, err := collector.findFirstArchiveBlock(test.head)
+			if err == nil {
+				t.Fatalf("expected an error, got block %d", got)
+			}
+			if got != 0 {
+				t.Fatalf("expected no block alongside the error, got %d", got)
+			}
+		})
+	}
+}
+
+// A transient failure must leave the series absent rather than replacing it
+// with the wrong number.
+func TestEthFirstArchiveBlockNumberCollectAfterTransientFailure(t *testing.T) {
+	node := &fakeNode{head: 16_000_000, firstArchive: 1_000_000, transientAt: 8_000_000}
+	server := node.server(t)
+	defer server.Close()
+
+	client, err := rpc.DialHTTP(server.URL)
+	if err != nil {
+		t.Fatalf("rpc connection error: %#v", err)
+	}
+
+	collector := newEthFirstArchiveBlockNumber(client)
+	collector.refresh()
+
+	ch := make(chan prometheus.Metric, 1)
+	collector.Collect(ch)
+	close(ch)
+
+	for result := range ch {
+		var metric dto.Metric
+		if err := result.Write(&metric); err == nil {
+			t.Fatalf("expected invalid metric, got %v", metric.Gauge.GetValue())
+		}
+	}
+
+	// The blip is over, so the next refresh finds the real floor.
+	collector.refresh()
+
+	ch = make(chan prometheus.Metric, 1)
+	collector.Collect(ch)
+	close(ch)
+
+	for result := range ch {
+		var metric dto.Metric
+		if err := result.Write(&metric); err != nil {
+			t.Fatalf("expected metric, got %#v", err)
+		}
+		if got := *metric.Gauge.Value; got != 1_000_000 {
+			t.Fatalf("got %v, want 1000000", got)
+		}
 	}
 }
 
@@ -257,8 +355,10 @@ func TestEthFirstArchiveBlockNumberCollectError(t *testing.T) {
 		if err == nil {
 			t.Fatalf("expected invalid metric, got %#v", metric)
 		}
-		if _, ok := err.(*url.Error); ok {
-			t.Fatalf("unexpected error %#v", err)
+		// The scrape log should say which probe failed, not just that
+		// something did.
+		if !strings.Contains(err.Error(), "probing block") {
+			t.Fatalf("error does not identify the failed probe: %v", err)
 		}
 	}
 }
