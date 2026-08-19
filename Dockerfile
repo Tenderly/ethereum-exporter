@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.16 as builder
+FROM --platform=$BUILDPLATFORM golang:1.26 as builder
 
 WORKDIR /ethereum_exporter
 COPY . .
@@ -8,6 +8,8 @@ COPY . .
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=undefined
+ARG TARGETOS
+ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -ldflags "-s -w -X main.version=$VERSION" github.com/31z4/ethereum-prometheus-exporter/cmd/ethereum_exporter
 
